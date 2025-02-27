@@ -1,0 +1,944 @@
+---
+title: "Wieloczynnikowa ANOVA, ANOVA z powtórzeniami oraz ANCOVA"
+author: "Aleksandra Talaga"
+date: "2024-11-20"
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+<br><br>
+
+# **1. Wstęp**
+
+<br>
+Celem projektu jest przeprowadzenie trzech typów analizy wariancji dla różnych zestawów danych. Każda z metod jest dostosowana do innego zestawu danych. Wieloczynnikowa ANOVA bada wpływ co najmniej dwóch różnych grup czynników na pewną zmienną ilościową i  odpowiada na pytanie, czy średnie w grupach różnią się istotnie. <br>
+ANOVA z powtórzeniami pozwala badać tą samą próbę w kilku punktach czasowych lub pod wpływem innych czynników, aby sprawdzić czy czas/czynnik mają znaczenie na średnią w danych grupach. Ważnym założeniem jest to, że pomiary są powtarzane dla tej samej próby. <br>
+ANCOVA natomiast bada, czy średnie różnią się istotnie w grupach, ale dodatkowo kontrolując wpływ zmiennej towarzyszącej, która jest istotnie skorelowana ze zmienną zależną. Stosuje się ją w sytuacjach, kiedy na wynik zmiennej zależnej mogą mieć wpływ nie tylko poszczególne grupy, ale także inne zmienne(ciągłe), które są z nią skorelowane.
+
+<br><br>
+
+# **2. ANOVA wieloczynnikowa**
+
+<br>
+
+## **2.1. Zestaw danych**
+
+<br><br>
+ANOVA zostanie przeprowadzona na zbiorze danych Adult Language Learning Profile pochodzących z ze strony internetowej `https://www.kaggle.com/datasets/thedevastator/adult-language-learning-profile`. Zbiór danych zawiera informacje dotyczące dorosłych uczących się języka niderlandzkiego przebywając w Holandii. Dane zawierają między innymi informacje dotyczące języka narodowego oraz kraju pochodzenia osób, wieku ich przybycia do Holandii, długości pobytu, a także wyniki testów badających biegłość w mówieniu, gramatyce, czytaniu i słownictwie. Zbiór zawiera w sumie 16 zmiennych oraz ponad 50tys. obserwacji.<br>
+Do analizy wariancji wybrano zmienne:<br>
+- **L1** - język ojczysty badanej osoby (zmienna kategoryczna)<br>
+- **Sex** - płeć (zmienna kategoryczna)<br>
+- **Speaking** - wynik testu badającego biegłość mówienia w języku niderlandzkim (zmienna ilościowa)
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(readxl)
+library(tseries)
+library(nortest)  # testy normalnosci
+library(ggpubr) # qqplot
+library(tidyverse)  # różne operacje na danych
+library(moments)  # skośność, kurtoza
+library(onewaytests)  # test równości wariancji
+library(lattice) # dotplot
+library(stats)  # do modelu aov
+library(agricolae)  # Duncan test
+library(multcomp) # funkcja glht
+library(DT) # ładniejsze tabele
+library(kableExtra) # ładniejsze tabele
+library(gridExtra) # grid.arrange()
+library(afex) # do anovy z powtórzeniami
+library(emmeans) # do anovy z powtórzeniami
+library(datarium) # zestawy danych
+library(rstatix)
+library(broom)
+library(lmtest) # testy w regresji
+
+languages <- read.csv("C:/Studia/Semestr 5/Statystyczna analiza danych/Projekt2(anova)/stex.csv")
+languages <- languages[-c(13367:13414), ] # usunięcie danych z błędnymi znakami
+languages$L1 = as.factor(languages$L1)
+languages$Sex = as.factor(languages$Sex)
+
+table(languages$L1)
+```
+
+<br><br>
+Ze względu na bardzo dużą liczbę kategorii, do badania zdecydowano wybrać 4 języki: duński, japoński, słowacki oraz tajski. Dobrano języki, które mają podobną ilość obserwacji. Każdy z tych języków należy do innej grupy i różnią się między sobą pochodzeniem, dlatego interesuje nas zbadanie, czy język ojczysty ma znaczenie w nauce języka niderlandzkiego (czy osobom mówiącym pewnymi językami jest łatwiej nauczyć się niderlandzkiego)? <br><br>
+Język niderlandzki jest językiem z grupy języków germańskich, patrząc szerzej jest językiem indoeuropejskim.<br>
+- **język duński** - pochodzi z grupy skandynawskiej języków germańskich. Ma więc najwięcej wspólnego z badanym językiem niderlandzkim <br>
+- **język słowacki** - pochodzi z grupy języków słowiańskich, ale jest także językiem indoeuropejskim <br>
+- **język japoński** - jego pochodzenie nie jest do końca znane. Domniemuje się, że należy do grupy języków ałtańskich <br>
+- **język tajski** - należy do rodziny języków dajskich <br>
+Na podstawie krótkiej charakterystyki języków można wysnuć pewne hipotezy, które zostaną zweryfikowane za pomocą ANOVY oraz w razie odrzucenia hipotezy zerowej także w analizie post-hoc. Język duński ma najwięcej wspólnego z językiem niderlandzkim, ponieważ należy on nie tylko do tej samej rodziny, ale także bliskiej grupy języków germańskich. Z tego powodu wydaje się, że mówiącym w języku duńskim naturalnie prościej przyjdzie nauczenie się języka niderlandzkiego. Język słowacki nie ma już aż tak wiele wspólnego, ale jednak należy do wspólnej rodziny języków indoeuropejskich, czyli w bardzo szerokim spojrzeniu języki te mają wspólne korzenie i wywodzą się z jednego prajęzyka. Wydaje się więc, że nauka dla mówiących po słowacku powinna być nieco trudniejsza, ale nie aż tak trudna jak dla mówiących po tajsku i japońsku. Te języki nie mają zupełnie nic wspólnego z niderlandzkim.<br><br>
+Drugi czynnik, którego wpływ zostanie zbadany, to płeć. Tutaj nie jest już tak oczywiste postawienie hipotezy wstępnej. W badaniu sprawdzone zostanie, czy płeć wpływa na poziom testu językowego. <br><br>
+
+```{r}
+languages <- languages %>%
+  filter(L1 %in% c("Danish", "Japanese", "Slovak", "Thai")) %>%
+  dplyr::select(L1, Sex, Speaking)
+
+languages$L1 <- droplevels(languages$L1)
+
+table(languages$L1)
+table(languages$Sex)
+```
+<br><br>
+
+Tak prezentuje się ilość obserwacji dla tylko 4 języków, z podziałem na płeć:<br>
+
+```{r}
+languages %>%
+  ggplot(aes(x = L1, fill = Sex)) +
+  geom_bar(position = "stack") +
+  theme_minimal()
+```
+
+<br><br>
+Ponieważ ANOVĘ najlepiej przeprowadzać dla małych próbek, zdecydowano, że ponad 1000 obserwacji to za duża ilość. W tak dużym zbiorze danych naturalne będzie występowanie wielu wahań, które mogą spowodować błędne odrzucenie hipotezy w ANOVIE lub w późniejszej analizie post-hoc. Z tego powodu zdecydowano się na wylosowanie po 40 danych z każdego języka. Ponieważ widać dużą dysproporcję w udziale kobiet i mężczyzn (tylko około 10% mężczyzn), co również może wpływać na późniejsze wyniki porównania, losowania dokonano tak, aby w każdej grupie językowej znalazło się równo po 50% mężczyzn i kobiet.
+
+```{r}
+set.seed(830)
+languages <- languages %>%
+  group_by(L1, Sex) %>%           
+  sample_n(size = 20) %>%              
+  ungroup()
+```
+
+
+<br>
+Tak prezentuje się pierwsze kilka wierszy z przygotowanego zestawu danych:
+
+```{r}
+kable(head(languages, 10))
+```
+<br><br>
+
+## **2.2. Eksploracyjna analiza danych**
+
+<br>
+Przed przystąpieniem do analizy wariancji warto poznać zbiór danych poprzez spojrzenie na statystyki opisowe i wizualizacje. <br>
+
+```{r}
+languages %>%
+  ggplot(aes(x = L1, y = Speaking, fill = L1)) +
+  geom_boxplot() +
+  theme_bw()
+
+
+languages %>%
+  ggplot(aes(x = Sex, y = Speaking, fill = Sex)) +
+  geom_boxplot() +
+  theme_bw()
+```
+
+<br>
+Grupy japońska i tajska wypadają zdecydowanie gorzej od pozostałych dwóch języków. Grupa tajska charakteryzuje się większą wariancją i najgorszymi wynikami. Co zaskakujące, grupa z językiem duńskim wypada bardzo podobnie jak grupa z językiem słowackim. Słowacki ma lekko większą wariancję, a mediana dla duńskiego jest lekko większa, jednak pomimo to wydaje się, że osoby mówiące po duńsku nie mają znaczącej przewagi nad osobami mówiącymi po słowacku.
+Jeśli chodzi o płeć, tutaj wyniki testu językowego wypadają dość podobne, jednak trochę lepiej radzą sobie kobiety oraz ich grupa ma mniejsze zróżnicowanie. Na wykresach widać niewiele wartości odstających, które jednak zostaną usunięte, aby nie zaburzały wyników ANOVY. Są to wartości, które leżą dalej niż 1,5 rozstępu ćwiartkowego od pierwszego i trzeciego kwartyla.
+
+```{r}
+remove_outliers <- data.frame()
+
+for (i in c("Danish", "Japanese", "Slovak", "Thai"))
+{
+  dane <- languages %>%
+    filter(L1 == i) 
+  
+  Q1 = quantile(dane$Speaking, 0.25)
+  Q3 = quantile(dane$Speaking, 0.75)
+  IRQ = Q3 - Q1
+  
+  filtered <- dane %>%
+    filter(Speaking <= Q3 + 1.5*IRQ & Speaking >= Q1 - 1.5*IRQ)
+  
+  remove_outliers <- bind_rows(remove_outliers, filtered)
+}
+
+
+remove_outliers2 <- data.frame()
+
+for (i in c("Female", "Male"))
+{
+  dane <- remove_outliers %>%
+    filter(Sex == i) 
+  
+  Q1 = quantile(dane$Speaking, 0.25)
+  Q3 = quantile(dane$Speaking, 0.75)
+  IRQ = Q3 - Q1
+  
+  filtered <- remove_outliers %>%
+    filter(Sex == i) %>%
+    filter(Speaking <= Q3 + 1.5*IRQ & Speaking >= Q1 - 1.5*IRQ)
+  
+  remove_outliers2 <- bind_rows(remove_outliers2, filtered)
+  
+}
+
+
+dane <- remove_outliers2
+```
+
+<br><br>
+**Statystyki opisowe** z podziałem na język ojczysty oraz na płeć
+
+<br>
+
+```{r}
+statystyki_jezyki <- dane %>%
+  group_by(L1) %>%
+  summarize(
+    Srednia = round(mean(Speaking),2),
+    Odchylenie = round(sd(Speaking),2),
+    Zmiennosc = paste(round((Odchylenie / Srednia) * 100, 2), "%"),
+    Mediana = median(Speaking),
+    Skosnosc = round(skewness(Speaking),2),
+    Kurtosis = round(moments::kurtosis(Speaking),2),
+    Q1 = quantile(Speaking, 0.25),
+    Q3 = quantile(Speaking, 0.75)
+  )
+
+
+statystyki_plec <- dane %>%
+  group_by(Sex) %>%
+  summarize(
+    Srednia = round(mean(Speaking),2),
+    Odchylenie = round(sd(Speaking),2),
+    Zmiennosc = paste(round((Odchylenie / Srednia) * 100, 2), "%"),
+    Mediana = median(Speaking),
+    Skosnosc = round(skewness(Speaking),2),
+    Kurtosis = round(moments::kurtosis(Speaking),2),
+    Q1 = quantile(Speaking, 0.25),
+    Q3 = quantile(Speaking, 0.75)
+  )
+
+kable(statystyki_jezyki)
+kable(statystyki_plec)
+```
+
+<br>
+Statystyki potwierdzają to, co odczytano z wykresów pudełkowych. Największą średnią ma język duński, jednak różni się ona tylko o niecałe 5pkt w teście językowym od wyniku dla języka słowackiego. Wyniki dla japońskiego i tajskiego są dużo słabsze, poniżej 500pkt. Współczynnik zmienności jest bardzo mały dla wszystkich grup języków. Oprócz języka tajskiego (skośność lewostronna) wszystkie pozostałe grupy mają bardzo symetryczny rozkład oraz kurtozę zbliżoną do 3. Sugeruje to, że zmienne w podgrupach mają rozkłady normalne lub zbliżone do normalnego. Dodatkowo mediana jest bliska średniej w każdym z przypadków. Odchylenie standardowe jest zbliżone w każdej podgrupie. Są to założenia analizy wariancji, które zostaną w następnych krokach zweryfikowane formalnymi testami. W podziale na płeć kobiety wypadają średnio lepiej o niecałe 20 punktów. Ponownie dane charakteryzują się małą zmiennością, symetrycznością i kurtozą zbliżonymi do rozkładu normalnego. <br><br>
+
+Podsumowaniem EDA będzie wykres przedstawiający obie kategorie (język i płeć) na jednym wykresie. Widać na nim dobrze rozrzut wartości:
+
+```{r}
+dane %>%
+  ggplot(aes(x = L1, y = Speaking, color = Sex)) +
+  geom_point(alpha = 0.6, size = 2) +
+  theme_minimal() +
+  labs(
+    x = "Język ojczysty",
+    y = "Wynik testu [pkt]",
+    color = "Płeć"
+  )
+```
+
+<br><br>
+
+Warto sprawdzić jeszcze czy między płcią i językiem zachodzą interakcje. Pozwoli to na zdecydowanie czy rozważać model addytywny czy model z interakcjami.
+
+<br>
+```{r}
+interaction.plot(dane$L1, dane$Sex, dane$Speaking,
+                 ylab= "Średnia wartość testu",
+                 xlab="Język ojczysty",
+                 trace.label="Płeć",  
+                 lwd=3)
+```
+<br>
+
+Linie na wykresie nie przecinają się, są w przybliżeniu równoległe, a więc nie występują interkacje między językiem ojczystym a płcią. Oznacza to, że dla obu płci pod wpływem czynnika zmiany języka ojczystego wyniki zachowują się podobnie (także w drugą stronę - dla każdego języka pod wpływem zmiany płci wyniki zachowują się podobnie).
+
+<br><br>
+
+## **2.3. Założenia ANOVY**
+
+<br><br>
+Założenia, które muszą być spełnione, aby móc wykonać analizę wariancji i wnioskować na jej podstawie: <br>
+1. Zmienna zależna ma wartości na skali przedziałowej <br>
+2. Próbka została wybrana z populacji w sposób losowy <br>
+3. Elementy próby zostały przypisane do danych podrgup losowo <br>
+4. Wszystkie pomiary są niezależne <br>
+
+Pierwsze założenie jest spełnione, wynik testu językowego jest daną liczbową. Trzech kolejnych założeń nie da się sprawdzić, ponieważ trzeba o nie zadbać w momencie zbierania danych, jednak w tym badaniu założono, że autorzy zbioru danych przygotowali go rzetelnie.Wybierając obserwacje do mniejszych grup we wcześniejszym kroku zadbano o losowość.
+
+<br><br>
+5. Dane w każdej próbie mają rozkład normalny - zostanie to sprawdzone testami statystycznymi (Shapiro Wilka oraz Lillieforsa, ponieważ oba te testy są najbardziej odpowiednie do małych prób. Test Shapiro Wilka ma dużą moc, natomiast test Lillieforsa jest modyfikacją testu Kołmogorowa-Smirnova) oraz wizualnie za pomocą QQ-plot. <br>
+
+```{r}
+Normalnosc_languages <- dane %>%
+  group_by(L1) %>%
+  summarise(
+    Shapiro = round(shapiro.test(pull(cur_data(), Speaking))$p.value, 2),
+    Lillie = round(lillie.test(pull(cur_data(), Speaking))$p.value, 2),
+  )
+
+Normalnosc_sex <- dane %>%
+  group_by(Sex) %>%
+  summarise(
+    Shapiro = round(shapiro.test(pull(cur_data(), Speaking))$p.value, 2),
+    Lillie = round(lillie.test(pull(cur_data(), Speaking))$p.value, 2)
+  )
+
+kable(Normalnosc_languages)
+kable(Normalnosc_sex)
+```
+<br>
+**H0: Dane mają rozkład normalny** <br>
+**H1: Dane nie mają rozkładu normalnego** <br>
+Na poziomie istotności wynoszącym 0.05 nie ma podstaw, aby odrzucić hipotezę zerową. Przyjmujemy więc, że wszystkie podgrupy zarówno dla płci jak i dla języka ojczystego mają rozkład normalny.
+
+<br><br>
+```{r}
+
+q1 <- ggqqplot(dane, "Speaking", facet.by = "L1")
+q2 <- ggqqplot(dane, "Speaking", facet.by = "Sex")
+
+grid.arrange(q1, q2, ncol = 2)
+```
+
+<br>
+QQ-plot to wykres przedstawiający kwantyle rozkładu danych. Dla rozkładu normalnego punkty na wykresie powinny leżeć idealnie na lini prostej. Wszelkie duże odstępstwa od prostej mogą wskazywać na to, że dane nie pochodzą z rozkładu normalnego. Jednak zarówno dla języków jak i dla płci punkty układają się w okolicy prostej i mieszczą się w zaznaczonym na szaro obszarze - oznacza to, że nie ma dużych odstępstw od teoretycznego rozkładu normalnego.
+
+<br><br>
+6. Wariancje w podgrupach są równe - jest to założenie o heteroskedastyczności. Ponownie do jego zbadania posłuży test statystyczny. Test Bartletta ma dużą moc, jednak jest wrażliwy na założenia o normalności rozkładów. Ponieważ te założenia sa spełnione, można wykorzystać ten test. <br>
+**H0: Wariancja w każdej grupie jest równa** <br>
+**H1: Wariancja jest różna dla przynajmniej jednej grupy** <br>
+
+```{r}
+bartlett.test(Speaking ~ L1, data=dane)
+bartlett.test(Speaking ~ Sex, data=dane)
+```
+
+<br>
+Na poziomie istotności 0.05 nie ma podstaw do odrzucenia hipotezy zerowej - czyli wszystkie podrgupy językowe a także obie płcie mają (w przybliżeniu) równe wariancje. Nie ma statystycznie istotnej różnicy między nimi. <br><br>
+
+Ponieważ wszystkie założenia ANOVY są spełnione, można przejść do zbudowania odpowiedniego modelu i jego interpretacji.
+
+<br><br>
+
+## **2.4. Model ANOVA**
+
+<br><br>
+**H0: Wartości oczekiwane w każdej podgrupie są równe** <br>
+**H1: Wartość oczekiwana jest różna dla przynajmniej jednej podgrupy** <br><br>
+
+Odrzucenie hipotezy zerowej pozwala wnioskowac o tym, że dany czynnik istotnie wpływa na wartość oczekiwaną (średnią) wyniku w populacji. Natomiast jeśli hipoteza nie zostanie odrzucona, znaczy to, że wyniki dla różnych kategorii danego czynnika nie różnią się od siebie istotnie. 
+
+```{r}
+ANOVA <- aov(Speaking ~ L1 + Sex, data = dane)
+summary(ANOVA)
+```
+<br>
+Zarówno dla języka jak i dla płci p-value jest bliskie 0 i oznacza odrzucenie hipotezy głównej. Język oraz płeć są więc czynnikami, które istotnie wpływają na wyniki testu językowego. Sama ANOVA nie mówi nam nic więcej - nie dostarcza odpowiedzi na to, które grupy istotnie różnią się między sobą.
+
+<br><br>
+```{r}
+confint(ANOVA)
+```
+<br>
+Więcej informacji dostarczą nam przedziały ufności. Powyższa tabela przedstawia 95% przedziały ufności. Intercept przedstawia grupę kontrolną, do której w tym przypadku należą kobiety mówiące językiem duńskim. Średnia wartość wyniku testu wynosi dla nich z 95 procentową pewnością między około 541 a 562. Dla języka japońskiego (przy założeniu tej samej płci - kobiety) wyniki będą mniejsze między 56 a 30 punktów. Dla języka słowackiego (przy założeniu tej samej płci) wyniki mogą być mniejsze o około 17 punktów, ale mogą być też większe do 8 punktów. Język tajski (przy założeniu tej samej płci) zdobędzie wynik mniejszy od 75 do 50 punktów. Jeśli zmienimy natomiast płeć (przy założeniu tego samejgo języka - duńskiego) wyniki będą mniejsze od 27 do 9 punktów. <br>
+Przedziały ufności pozwalają wyrobić intuicję tego, jak faktycznie zmiana języka czy płci wpływa na wynik testu. Dla języków japońskiego i tajskiego faktycznie widać, że średnia będzie o kilkadziesiąt punktów mniejsza, także dla płci męskiej wyniki będą mniejsze. Jedynie dla języka słowackiego przedział ufności nie dostarcza nam jednoznacznej odpowiedzi - wyniki mogą być zarówno mniejsze jak i większe. 
+
+<br><br>
+
+## **2.5. Miary wielkości efektu **
+
+<br><br>
+
+Pozwalają ocenić, jak mocno dany czynnik wpływa na różnice w wynikach zmiennej zależnej. Jedną z miar jest \(\eta^2\) - proporcja wariancji błędu i efektu, która pozwala ocenić wpływ czynnika jedynie dla próby. Natomiast \(\omega^2\) jest estymatorem wariancji zmiennej zależnej wyjaśnionej przez zmienną niezależną w całej populacji. Wartości obu tych miar interpretuje się tak samo: <br>
+- [0%, 6%) - efekt słaby <br>
+- [6% - 14%) - efekt umiarkowany <br>
+- > 14% - efekt silny <br><br>
+
+```{r}
+ANOVA_summary <- summary(ANOVA)[[1]]
+
+SStotal <- sum(ANOVA_summary[,2])
+
+eta_squared <- data.frame(
+  nazwa_efektu = rownames(ANOVA_summary),
+  SS = ANOVA_summary[,2]
+)
+
+eta_squared <- eta_squared %>%
+  mutate(
+    eta2_czastkowe = paste(round(SS / (SS + eta_squared[3,2]),4) * 100, "%")
+    )
+
+kable(eta_squared[-3, ])
+```
+<br>
+Widać, że w próbie język wpływa bardzo mocno na wyniki testu (ponad 45%), natomiast siła efektu płci jest umiarkowana (niecałe 10%) <br><br>
+
+```{r}
+omega2_L1 = (ANOVA_summary[1,2] - ANOVA_summary[1,1] * ANOVA_summary[1,3] / ANOVA_summary[2,3]) / (ANOVA_summary[1,3] / ANOVA_summary[2,3] + SStotal) 
+omega2_Sex = (ANOVA_summary[2,2] - ANOVA_summary[2,1] * ANOVA_summary[1,3] / ANOVA_summary[2,3]) / (ANOVA_summary[1,3] / ANOVA_summary[2,3] + SStotal) 
+
+omega2_L1 = paste(round(omega2_L1, 4) * 100, "%")
+omega2_Sex = paste(round(omega2_Sex, 4) * 100, "%")
+
+kable(
+  data.frame(
+  Nazwa_efektu = c("L1", "Sex"),
+  Omega2 = c(omega2_L1, omega2_Sex)
+))
+```
+<br>
+W całej populacji język wciąż wpływa bardzo silnie na wyniki testu - ponownie miara wielkości efektu wynosi ponad 40%. Natomiast dla płci jest to niecałe 6%, czyli w całej populacji efekt jest słaby (w próbie natomiast był umiarkowany)
+
+
+<br><br>
+
+## **2.6. Analiza post-hoc **
+
+<br><br>
+
+Analiza post-hoc ma na celu odpowiedzenie na pytanie, dla których grup wartości oczekiwane są różne od pozostałych. Może być tak, że będzie to tylko jedna grupa, a może być tak, że wszystkie będą różnić się między sobą. Nie jesteśmy w stanie wywnioskować tego z samego p-value w ANOVIE, dlatego właśnie przeprowadza się analizę post-hoc po odrzuceniu H0.
+
+<br>
+Testy post-hoc są są testami wieloktornych porównań. Porównują one średnie we wszystkich grupach, szukajac istotnych różnic między nimi. Jest wiele testów, które to umożliwiają. Różnią się one czułością (jedne są bardzo czułe nawet na małe różnice, natomiast inne są bardziej wymagające i wskazują jedynie najistotniejsze różnice). <br><br>
+W tym badaniu przeprowadzono trzy różne testy post-hoc. <br><br>
+
+a) test Duncana - najbardziej czuły, wskazuje nawet niewielkie różnice jako istotne <br>
+
+```{r}
+d_L1 = duncan.test(ANOVA, "L1")
+d_S = duncan.test(ANOVA, "Sex") 
+
+d_L1$groups
+d_S$groups
+```
+
+Test przydziela kategorie do odpowiednich grup - jeśli nie ma między nimi istotnych różnic to przydziela je do wspólnej grupy. W przypadku języków duńskiego i słowackiego nawet najczulszy test przydzielił je do jednej grupy - średnie dla obu tych kategorii nie różnią się istotnie. Natomiast język japoński i tajski zostały przydzielone do osobnych grup. Jeśli chodzi o płeć test również wskazał istotne różnice. <br><br>
+
+b) test Bonferroniego - działa na zasadzie t-testu, ale dostosowuje w odpowiedni sposób p-value do wieloktornych porównań <br>
+
+```{r}
+pairwise.t.test(dane$Speaking, dane$Sex, p.adj = "bonf")
+pairwise.t.test(dane$Speaking, dane$L1, p.adj = "bonf")
+```
+P-value jedynie pomiędzy językiem słowackim i duńskim jest duże, w każdym innym przypadku języków oraz także dla płci test wskazuje istotne różnice. Dał więc takie same wyniki jak test Duncana. 
+
+<br><br>
+
+c) test Tukeya - konserwatywny test, który pokazuje dość mało różnic <br>
+
+```{r}
+tukey_L1 = TukeyHSD(ANOVA, "L1") 
+tukey_L1
+plot(tukey_L1, cex.axis = 0.6, las = 1)
+```
+<br>
+Test Tukeya porównujący parami grupy języków ponownie dał takie same wyniki. Dodatkowo daje nam również informacje o 95% przedziale ufności dla prostych kontrastów (różnic między średnimi w parach) oraz można przedstawić te przedziały wizualnie na wykresie. 0 oznacza, że średnie dla dwóch grup nie różnią się między sobą i dla 95% przedziałów ufności wartość ta wpada jedynie do przedziału dla duńskigo-słowackiego. Interpretując przedziały ufności widać, że najgorzej wypada język tajski (od prawie 80 do 46 punktów gorzej od duńskiego oraz od 75 do 41 punktów gorzej od słowackiego) Dla japońskiego te różnice wciąż są bardzo duże, ale jednak trochę mniejsze (maksymalnie 55 punktów gorzej). Język tajski jest gorszy od japońskiego, jednak tutaj różnice nie są już tak bardzo duże (między 20 a 2 pkt). Przedział dla kontrast słowacki-duński zawiera zarówno dodatnie jak i ujemne wartości (jeden z nich może być zarówno lepszy jak i gorszy o kilka pkt od drugiego) - wiemy z testów, że wyniki dla tych języków nie różnią się od siebie istotnie.
+
+<br>
+```{r}
+tukey_S <- TukeyHSD(ANOVA, "Sex")
+tukey_S
+plot(tukey_S)
+```
+<br>
+Wyniki dla płci dała znów analogiczne rezultaty jak poprzednie testy. Mężczyźni wykazują się gorszymi wynikami w teście od kobiet z 95% pewnością między 18 a 9 punktów gorzej. <br>
+
+<br><br>
+
+**Wsnioski z analizy post-hoc: ** Wszystkie testy dały takie same rezultaty. Wskazują one, że różnią się między sobą istotnie wyniki testów między mężczyznami a kobietami (lepiej wypadają kobiety) a także wszystkie możliwe pary języków oprócz duńskiego-słowackiego różnią się istotnie. Zawsze lepiej wypada język duński i słowacki. W parze "słabszych" języków tajski-japoński również jest istotna różnica na korzyść japońskiego.
+
+<br><br>
+
+## **2.7. Kontrasty **
+
+<br><br>
+
+Ostatnim elementem analozy warianji będzie zbadanie kontrastów. Proste kontrasty między parami były już prezentowane w analizie post-hoc. Można jednak zastosować także inne kontrasty, badające na przykład czy wyniki dla jednej z grup są średnią pozostałych grup.
+
+<br><br>
+
+Kontrast, który zostanie sprawdzony to czy dla języka japońskiego wynik jest średnio większy niż średnia dla języka duńskiego i tajskiego łącznie. <br>
+**H0: J - 0.5D - 0.5T > 0** <br>
+**H1: J - 0.5D - 0.5Y <= 0** <br>
+
+```{r}
+kontrast1 <- glht(ANOVA,
+                  linfct = mcp(L1 = rbind(c(-0.5, 1, 0, -0.5))))
+summary(kontrast1)
+
+# alternatywnie można to zrobić tak - wychodzą te same wyniki
+# kontr <- emmeans(ANOVA,  ~ L1)
+# kontrast2 <- contrast(kontr, list(my_contrast = c(-0.5, 1, 0, -0.5)))
+# summary(kontrast2)
+```
+Nie ma podstaw do odrzucenia hipotezy zerowej, czyli istotnie średnia dla języka japońskiego jest większa niż średnia dla języka duńskiego i tajskiego
+
+<br><br>
+
+## **2.7. Podsumowanie **
+
+<br><br>
+Wieloczynnikowa analiza wariancji dała odpowiedź na to, czy płeć i język ojczysty mają istotny wpływ na wyniki osób w teście ustnym z języka niderlandzkiego. Odpowiedź brzmi: tak. Hipoteza, która została postawiona na początku badania okazała się częściowo prawdziwa. Faktycznie osobom mówiącym "odległymi" językami takimi jak japoński i tajski jest trudniej mówić po niderlandzku. Jednak mimo, że duński należy tak samo jak język niderlandzki do języków germańskich, nie było istotnych różnic między nim, a językiem słowackim (z grupy słowiańskich). Wydawało się również, że płeć nie powinna mieć znaczenia - a jednak okazuje się, że kobiety uzyskiwały wyższe wyniki.
+
+
+<br><br>
+
+
+# **3. ANOVA z powtórzeniami**
+
+<br><br>
+Analizę wariancji z powtórzeniami wykonuje się wówczas, gdy dla tej samej próby pomiary są powtarzane kilka razy. Dotyczy to dwóch sytuacji - albo pomiaru pod wpływem tego samego czynnika ale w różnym czasie (np. pomiar ciśnienia krwi miesiąc przed, w trakcie oraz miesiąc po stosowaniu leku X), albo pomiaru pod wpływem różnych czynników (np. pomiar ciśnienia krwi po stosowaniu trzech różnych leków A, B i C). Kluczowe jest to, że pomiar za każdym razem dotyczy tej samej próby. Anova z powtórzeniami odpowiada na pytanie, czy średnie mierzone w różnym czasie lub pod wpływem innego czynnika różnią się od siebie istotnie.
+
+<br><br>
+ANOVA z powtórzeniami dokonuje podziału całkowitej wariancji w próbie na wariancję międzygrupową oraz wewnątrzgrupową, ale dodatkowo rozbija tę drugą na wariancję związaną z poszczególnymi obserwacjami oraz na wariację związaną z błędem. W zwykłej ANOVIE wariancja wewnątrzgrupowa to po prostu wariancja związana z błędem (SSerror).
+
+<br><br>
+
+## **3.1 Zestaw danych**
+
+<br><br>
+
+Zestaw `depression` pochodzi z pakietu `datarium`. Dane dotyczą leczenia depresji. Zawierają wyniki pomiaru poziomu lęku (zmienna zależna, ciągła) u osób w dwóch grupach (kontrolnej i poddanej leczeniu) w czterech różnych punktach czasowych (przed leczeniem, miesiąc od rozpoczęcia, 3 miesiące oraz 6 miesięcy od rozpoczęcia). Zestaw danych może służyć do przeprowadzenia ANOVY mieszanej w celu zbadania zarówno wpływu leczenia jak i wpływu czasu na wynik poziomu depresji. Jednak w tym badaniu wybrano jedynie grupę, która została podjęta leczeniu, aby przeprowadzić jednoczynnikową ANOVE z powtórzeniami. <br>
+Celem będzie zbadanie, czy czas od momentu rozpoczęcia leczenia depresji ma wpływ na poziom lęku.
+
+```{r}
+data("depression")
+
+depression <- depression %>%
+  filter(treatment == "treated")
+
+depression <- depression[, -2]
+
+long_depression <- depression %>%
+  pivot_longer(
+    cols = c("t0", "t1", "t2", "t3"),
+    values_to = "Wynik",
+    names_to = "Czas"
+  )
+
+```
+
+<br>
+Kilka pierwszych obserwacji z zestawu danych:
+
+```{r}
+head(depression, 6)
+```
+<br><br>
+
+## **3.2. Eksploracyjna analiza danych**
+
+<br><br>
+
+Wykresy pudełkowe oraz statystyki opisowe osobno dla każdego punktu w czasie pozwolą wstępnie zrozumieć zestaw danych przed przeprowadzeniem ANOVY z powtórzeniami. W zestawie danych pojawiły się dwie wartości odstające dla t0, które zostały zastąpione najmniejszą wartością mieszczącą się w odległości 1.5IQR od dolnego kwantyla (przed policzeniem statystyk opisowych).
+
+```{r}
+long_depression %>%
+  ggplot(aes(x = Czas , y = Wynik, fill = Czas)) +
+  geom_boxplot() +
+  theme_bw()
+
+long_depression <- long_depression %>%
+  mutate(Wynik = ifelse(Czas == "t0" & Wynik < 200, 263, Wynik))
+
+statystyki_depression<- long_depression %>%
+  group_by(Czas) %>%
+  summarize(
+    Srednia = round(mean(Wynik),2),
+    Odchylenie = round(sd(Wynik),2),
+    Zmiennosc = paste(round((Odchylenie / Srednia) * 100, 2), "%"),
+    Mediana = median(Wynik),
+    Skosnosc = round(skewness(Wynik),2),
+    Kurtosis = round(moments::kurtosis(Wynik),2),
+    Min = min(Wynik),
+    Max = max(Wynik)
+  )
+
+kable(statystyki_depression)
+```
+
+Statystyki oraz wykresy wskazują na to, że wynik zmierzony przed rozpoczęciem leczenia był dużo wyższy niż pozostałe wyniki mierzone w trzech różnych odstępach czasowych. Średnia dla t0 jest aż 3 razy większa niż średnia w pozostałych punktach czasowych. Co ciekawe, t0 ma też najmniejszą zmienność (a także najmniejsze bezwzględne odchylenie standardowe).Jeśli chodzi o pozostałe grupy, wszystkie mają podobną średnią, ale jest tendencja wzrostowa między t1 a t3 (wzrasta nie tylko średnia, ale również mediana). Ich współczynnik zmienności różni się od siebie jedynie o kilka punktów procentowych. Największe odchylenie bezwględnie posiada grupa po 3 miesiącach leczenia (t2). W ostatnim punkcie pomiaru występuje lekka asymetria lewostronna (w przeciwieństwie do pozostałych, gdzie występuje lekka asymetria prawostronna). Oznacza to, że jest niewiele obserwacji, których bardzo mała wartość "ciągnie" rozkład w lewą stronę (minimum dla tej grupy wynosi 6 przy średniej 106 i wartości maksymalnej 184. Kurtoza około 2 wskazuje na platokurtyczność (dane nie są bardzo gęsto skupione wokół średniej) - potwierdza to także wysoki współczynnik zmienności. 
+<br>
+Po obejrzeniu danych wydaje się oczywiste, że grupa t0 będzie różnić się od wszystkich pozostałych grup. Ciekawszym pytaniem jest, czy grupy t1, t2 i t3 będą różnić się istotnie między sobą.
+
+<br><br>
+
+## **3.3. Założenia ANOVY z powtórzeniami**
+
+<br><br>
+Oprócz założeń związanych ze zwykła ANOVĄ (szczególnie tych które można zbadać - rozkład normalny oraz równa wariancja w każdej z grup) musi zostać dodatkowo spełnione założenie dotyczące sferyczności. Bada je test Mauchley’a i jeśli hipoteza zerowa dotycząca sferyczności zostanie odrzucona, trzeba zastosować odpowiednią poprawkę, np.  Greenhouse’a-Geissera lub  Huynha-Feldta.
+
+<br>
+```{r}
+Normalnosc_depression <- long_depression %>%
+  group_by(Czas) %>%
+  summarise(
+    Shapiro = round(shapiro.test(pull(cur_data(), Wynik))$p.value, 2),
+    Lillie = round(lillie.test(pull(cur_data(), Wynik))$p.value, 2)
+  )
+
+kable(Normalnosc_depression)
+ggqqplot(long_depression, "Wynik", facet.by = "Czas")
+```
+
+Zarówno test Shapiro Wilka jak i Lillieforsa wskazują na to, że dane w każdym punkcie pomiaru mają rozkład normalny. To samo potwierdzają wykresy typu QQ-plot - punkty układają się w przybliżeniu w linię prostą.
+
+<br>
+
+```{r}
+bartlett.test(long_depression$Wynik, long_depression$Czas)
+```
+Test Bartletta nie odrzucił H0, która mówi o równej wariancji w każdej z grup. Kolejne założenie jest spełnione. Założenie o sferyczności zostanie zbadane automatycznie przy tworzeniu modelu i będzie można sprawdzić jego wynik. Jeśli test odrzuci sferyczność, będzie można zastosować odpowiednie poprawki.
+
+<br><br>
+
+## **3.4. Model ANOVA z powtórzeniami**
+
+<br><br>
+
+```{r}
+rm_ANOVA <- aov_4(Wynik ~ Czas + (Czas|id), data = long_depression)
+summary(rm_ANOVA)
+```
+Pierwsza tabela zwraca wyniki testu, który badał równość średnich w grupach w różnym czasie (zakładając spełnione założenie o sferyczności). Poniżej są wyniki testu Mauchly'ego, gdzie p-value wynosi 0koło 0.35, czyli założenie jest spełnione. Gdyby nie było spełnione, od razu można odczytać wyniki z poprawkami Greenhouse-Geissera lub Huynh-Feldta.
+
+<br>
+Zmienna czas jest istotna na poziomie 0.001. Oznacza to, że istotnie na średnie w grupach wpływa czas, w którym mierzono wyniki. Nie informuje nas jednak o tym, które średnie grupowe są od siebie istotnie różne.
+
+<br><br>
+
+## **3.5. Analiza post-hoc**
+
+<br><br>
+
+```{r}
+
+posthocks <- emmeans(rm_ANOVA, specs = pairwise ~ Czas, model = "multivariate",
+                     adjust = "bonferroni")
+posthocks
+```
+Badanie prostych kontrastów dla wszystkich par wskazało, że istotnie różnią się od siebie grupa t0 z każdą kolejną grupą. Natomiast nie ma powodu, by sądzić, że grupy t1, t2 i t3 różnią się od siebie. Można wnioskować, że rozpoczęcie leczenia depresji ma ogromny wpływ na to, jakie będą wyniki lęku u osób leczonych. Samo rozpoczęcie leczenia zmniejsza poziom lęku i niższe wyniki utrzymują się w czasie 3 i 6 miesiący w trakcie leczenia.
+
+<br><br>
+
+## **3.6. Kontrasty**
+
+<br><br>
+Kontrast ma na celu zbadanie, czy wyniki dla t2 (3 miesiące od rozpoczęcia leczenia) są średnią wyników t1 i t3 (odpowiednio miesiąc i 6 miesięcy od rozpoczęcia leczenia)
+
+```{r}
+kontr <- emmeans(rm_ANOVA, ~ Czas)
+kontrast2 <- contrast(kontr, list(my_contrast = c(0, -0.5, 1, -0.5)))
+summary(kontrast2)
+
+```
+Współczynnik p-value jest bardzo wysoki, czyli hipoteza jest prawdziwa. Można uznać, że wynik w punkcie t2 jest średnią z wyników w punkcie t1 oraz t3.
+
+<br><br>
+
+## **3.7. Podsumowanie**
+
+<br><br>
+Analiza wariancji z powtórzeniami pozwoliła przebadać tę samą grupę pacjentów w czterech punktach czasowych i na tej podstawie ocenić, jak działo leczenie, której zostali poddani. Wynik okazał się zgodny z początkowymi przewidywaniami. Istotnie wyniki w trakcie leczenia różniły się od wyników pacjentów przed rozpoczęciem leczenia. Wielkości dla każdej grupy można jeszcze raz zaprezentować na wykresie przedstawiającym średnie wraz z 95% przedziałami ufności.
+
+```{r}
+emmip(rm_ANOVA, ~ Czas, CIs = T,
+      xlab = "Czas",
+      ylab = "Wynik") +
+  theme_bw()
+```
+
+
+<br><br>
+
+# **4. Analiza kowariancji (ANCOVA)**
+
+<br><br>
+
+Analizę kowariancji wukorzystujemy wtedy, gdy chcemy zbadać wpływ grup jakiegoś czynnika/czynników na wyniki zmiennej zależnej, ale okazuje się, że ze zmienną zależną jest istotnie skorelowana jakaś kolejna zmienna nazywana zmienną towarzyszącą. ANCOVA umożliwia wówczas kontrolowanie poziomu zmiennej towarzyszącej i dzięki temu sprawdzenie, czy średnie między poszczególnymi grupami różnią się od siebie istotnie (najpierw średnie zostaną skorygowane o relację między zmienną zależną i zmienną towarzyszącą). ANCOVA łączy w sobie analizę wariancji oraz regresję.
+
+<br><br>
+
+## **4.1. Zestaw danych**
+
+<br>
+
+Aby móc przeprowadzić analizę kowariancji potrzebny jest zbiór, który składa się ze zmiennej zależnej (ciągłej), zmienne zależne, których wpływ na średnie chcemy badać (kategoryczne/porządkowe) oraz co najmniej jedna zmienna towarzysząca skorelowana ze zmienną zależną (również ciągła). W pakiecie `datarium` dostępne są różne zbiory danych służące m.in. do przeprowadzania różnych wariantów ANOVY. 
+
+<br>
+
+Do analizy kowariancji wybrano zbiór `stress`, który zawiera zmienne dotyczące wpływu czynników na poziom stresu. Składa się z 60 obserwacji i 5 zmiennych. Do jednoczynnikowej ANCOVY wybrano niektóre zmienne: <br>
+-**score** (zmienna zależna) -  wynik badania na stężenie cholesterolu mmol/L we krwi - liczne badania wskazują, że stres jest czynnikiem, który bezpośrednio przekłada się na wysoki cholesterol we krwi.  <br>
+-**exercise** (zmienna niezależna) - posiada 3 kategorie: low, moderate, high informujące o tym, czy dana osoba ćwiczy mało, umiarkowanie czy dużo <br>
+-**age** (zmienna towarzysząca) - wiek osoby, który jest skorelowany z poziomem cholesterolu
+
+
+```{r}
+stress <- stress
+stress <- stress[, c(2,4,5)]
+
+head(stress, 10)
+```
+
+<br><br>
+
+## **4.2. Eksploracyjna analiza danych**
+
+<br><br>
+
+Najpierw zbadano testem statystycznym to, czy korelacja między zmienną zależną a towarzyszącą jest istotna. Wynosi ona w przybliżeniu 0.53 i test wskazuje, że jest istotna.
+
+```{r}
+cor.test(stress$score, stress$age)
+```
+<br><br>
+
+```{r}
+stress %>%
+  ggplot(aes(x = exercise, y = score, fill = exercise)) +
+  geom_boxplot() +
+  theme_bw()
+
+statystyki_stress <- stress %>%
+  group_by(exercise) %>%
+  summarize(
+    Srednia = round(mean(score),2),
+    Odchylenie = round(sd(score),2),
+    Zmiennosc = paste(round((Odchylenie / Srednia) * 100, 2), "%"),
+    Mediana = median(score),
+    Skosnosc = round(skewness(score),2),
+    Kurtosis = round(moments::kurtosis(score),2),
+    Min = min(score),
+    Max = max(score)
+  )
+
+kable(statystyki_stress)
+```
+
+<br>
+
+Dzięki wykresom pudełkowym oraz statystykom opisowym można przyjrzeć się wstępnie danym. Wykresy oraz statystyki policzono osobno dla każdej grupy poziomu ćwiczeń. Osoby ćwiczące mało i umiarkowanie mają wysoki poziom cholesterolu, dla obu grup jest on podobny - ich średnie niemal się nie różnią, (ale osoby ćwiczące mało mają większą wariancję). Natomiast widać różnicę dotyczącą osób ćwiczących dużo. Ich poziom cholesterolu jest zdecydowanie niższy. Rozkłady dla wszystkich trzech grup są w przybliżeniu symetryczne i wszystkie też mają kurtozę mniejszą od 3, co wskazuje na platokurtyczność czyli to, że dane nie są blisko zgromadzone wokół średniej.
+
+<br><br>
+Zbadano także, jak prezentuje się rozkład oraz statystyki opisowe dla wieku.
+
+```{r}
+stress %>%
+  ggplot(aes(x = age)) + 
+  geom_density(size = 1.5) +
+  theme_bw()
+
+wynik = c(
+  round(mean(stress$age), 2),
+  round(sd(stress$age), 2),
+  round(sd(stress$age) / mean(stress$age),4) * 100,
+  round(median(stress$age), 2),
+  round(skewness(stress$age), 2),
+  round(moments::kurtosis(stress$age), 2),
+  Min = min(stress$age),
+  Max = max(stress$age)
+)
+nazwa = c("Srednia", "Odchylenie", "Zmiennosc",
+          "Mediana", "Skosnosc", "Kurtoza",
+          "Min", "Max")
+
+statystyki_wiek <- data.frame(
+  nazwa,
+  wynik
+)
+
+kable(statystyki_wiek)
+
+```
+
+Osoby badane mają średnio około 60 lat i taka też jest mediana. Najmłodsza osoba badana miała 52 lata, a najstarsza 75. Rozkład jest lekko asymetryczny prawostronnie oraz kurtoza wskauzje na leptokurtyczność czyli większe skumulowanie danych wokół średniej.
+
+<br><br>
+
+## **4.3. Założenia ANCOVY**
+
+<br><br>
+Ponieważ ANCOVA łączy w sobie analizę wariancji oraz regresję do jej przeprowadzenia powinny zostać spełnione założenia dotyczące ich obu oraz założenia dodatkowe. <br><br>
+
+Założenia dotyczace analizy wariancji: <br>
+- dane w każdej podgrupie mają rozkład normalny <br>
+- wariancje w każdej podgrupie są równe <br>
+
+```{r}
+Normalnosc_stress <- stress %>%
+  group_by(exercise) %>%
+  summarise(
+    Shapiro = round(shapiro.test(score)$p.value,2),
+    Lillie =  round(lillie.test(score)$p.value,2)
+  )
+
+kable(Normalnosc_stress)
+```
+
+Zarówno test Shapiro Wilka jak i Lillieforsa, które są odpowiednie dla małych prób, wskazały, że nie ma podstaw na poziomie istotności 0.05 do odrzucenia hipotezy mówiącej o normalności rozkładu. Skoro mamy zapewniony rozkład normalny, można skorzystać z testu Bartletta, aby ocenić równość wariancji w grupach. 
+
+```{r}
+bartlett.test(score ~ exercise, data = stress)
+```
+Tutaj również p-value wynosi ponad 0.05, a więc uznajemy, że wariancje w grupach są sobie równe.
+
+<br><br>
+Założenia dotyczace regresji: <br>
+- zależność liniowa (między zmienną wyjaśnianą - w tym wypadku score, a zmienną wyjaśniającą - w tym wypadku age) <br>
+- normalność rozkładu reszt modelu <br>
+- homogeniczność reszt (mają stałą wariancję)
+
+<br><br>
+Liniowośc zostanie oceniona na podstawie wykresu zarówno wszystkich danych, jak i danych z podziałem na trzy grupy.
+
+
+```{r}
+ggscatter(
+  stress, x = "age", y = "score", add = "reg.line")
+
+ggscatter(
+  stress, x = "age", y = "score",
+  color = "exercise", add = "reg.line")
+
+```
+
+<br> 
+Jeśli chodzi o wykres bez podziału na trzy grupy to widać zależnośc liniową. Podział na grupy trochę komplikuje sprawę i ta zależność nie jest już aż tak oczywista w przypadku grupy niebieskiej (wysokiej częstotliwości ćwiczeń), ale w celu dalszego badania uznano, że istnieje zależność liniowa w każdej z grup.
+
+<br><br>
+W celu zbadania normalności reszt należy najpierw stworzyć model regresji prostej, a następnie wyciągnąć z niego informację o resztach i zbadać je np. za pomocą testu statystycznego.
+
+```{r}
+regresja <- lm(score ~ age + exercise, data = stress)
+shapiro.test(regresja$residuals)
+```
+Reszty mają rozkład normalny.
+
+<br><br>
+
+Homogeniczność można zbadać np. testem Goldfelda-Quandta (hipoteza zerowa zakłada równośc wariancji). Homogeniczność w obrębie każdej z grup zostanie zbadana przy pomocy testu Levenea (hipoteza zerowa taka sama jak w poprzednim teście).
+
+```{r}
+gqtest(regresja)
+
+regresja_metrics <- augment(regresja)
+regresja_metrics <- regresja_metrics[, c("exercise", ".resid")]
+
+levene_test(.resid ~ exercise, data = regresja_metrics)
+```
+Oba testy nie odrzucają hipotezy zerowej - czyli reszty są homogeniczne nie tylko dla całości danych, ale także w obrębie każdej grupy.
+
+<br><br>
+Dodatkowym założeniem w analizie kowariancji jest jednorodność lub równoległość regresji w obrębie grup. Oznacza to, że dla każdej z grup współczynnik regresji jest w przybliżeniu równy (można zbadać to też wizualnie - na wykresie linie regresji powinny być w przybliżeniu równoległe). W praktyce oznacza to brak wpływu zmiennej towarzyszącej na zmienne niezależne  - czyli brak interakcji między nimi. Można zbadać to, tworząc model z interakcjami zwykłej ANOVY, gdzie zmienną zależną będzie score, a zmiennymi niezależnymi wiek oraz poziom ćwiczeń.
+```{r}
+m <- aov(score ~ exercise*age, data = stress)
+summary(m)
+```
+Interakcja między ćwiczeniami a wiekiem nie jest statystycznie istotna, a więc można uznać założenie o równoległości regresji za zasadne. <br>
+
+```{r}
+ggscatter(
+  stress, x = "age", y = "score",
+  color = "exercise", add = "reg.line")
+```
+
+Spójrzmy jeszcze raz na wykres - linie regresji nie są idealnie równoległe, ale współczynnik ich nachylenia (współczynnik regresji) wydaje się zbliżony. Potwierdziła nam to ANOVA.
+
+
+<br><br>
+
+## **4.4. Model ANCOVA**
+
+<br><br>
+
+Ponieważ wszystkie niezbędne założenia są spełnione, można przejśc do stworzenia modelu analizy kowariancji. Na początku jednak zostanie sprawdzone, czy zwykła jednoczynnikowa ANOVA odrzuci hipotezę o równości średnich w grupach.
+
+```{r}
+ANOVA_stress <- aov(score ~ exercise, data = stress)
+summary(ANOVA_stress)
+```
+ANOVA wskazuje na to, że różnica między grupami jest istotna (na poziomie aż 0.001) czyli ćwiczenia fizyczne wpływają na średni wynik cholesterolu. Sprawdźmy jeszcze, pomiędzy którymi grupami są istotne różnice używając testu Bonferroniego. <br>
+
+```{r}
+pairwise.t.test(stress$score, stress$exercise, p.adj = "bonf")
+```
+Istotne różnice występują dla wysokiego poziomu ćwiczeń z obiema pozostałymi grupami. Nie ma natomiast istotnej różnicy między poziomem niskim a umiarkowanym.
+
+```{r}
+ANCOVA <- anova_test(score ~ age + exercise, data = stress,
+                     effect.size = "pes")
+ANCOVA
+```
+
+ANCOVA dodatkowo kontrolując wpływ zmiennej towarzyszącej również wskazuje na to, że ćwiczenia fizyczne wpływają istotnie na średni wynik poziomu cholesterolu. Pes (partial eta squared) czyli eta cząstkowe - miara efektów eskperymentalnych wynosi około 35% dla grupy dotyczącej ćwiczeń. Oznacza to, że wpływ tej grupy jest silny. 
+
+<br><br>
+
+## **4.5. Analiza post-hoc**
+
+<br><br>
+
+Ponownie, aby uzyskać informację na temat tego, które grupy różnią się między sobą, należy przeprowadzić analizę post-hoc. 
+
+```{r}
+stress_post <- stress %>% 
+  emmeans_test(
+    score ~ exercise, covariate = age,
+    p.adjust.method = "bonferroni"
+  )
+
+kable(stress_post[, -2])
+```
+Okazuje się, że istotne różnice występują między grupą ćwiczących dużo a pozostałymi dwoma grupami. Nie różni się natomiast wynik pomiedzy ćwiczącymi mało i średnio. Można z tego wnioskować, że aby obniżyć poziom cholesterolu w organiźmie (bez względu na wiek), trzeba uprawiać sport z dużą częstotliwością. Ćwiczenia fizyczne rzadko lub z umiarkowaną częstotliwością dają porównywalne do siebie efekty.
+
+<br><br>
+Warto spojrzeć na średnie po uwzględnieniu zmiennej wiek.
+
+```{r}
+get_emmeans(stress_post)
+```
+
+Tabela przedstawia średni wynik po dostosowaniu wieku (emmean) oraz 95% przedział ufności.
+Średnia dla niskiej częstotliwości ćwiczeń wynosiła wcześniej 88.72 a teraz wynosi 87.61. Także dla umiarkowanego poziomu wyznaczona średnia nieznacznie zmalała z 88.11 do 87.8. Jednak jest to bardzo niewielka zmiana. Średnia dla wysokiej częstotliwości ćwiczeń natomiast wzrosła z 76.89 do 78.31. Zmiany nie są jednak duże. W wypadku tego badania zmienna wiek nie wpływała bardzo na wyniki i zostały wskazane te same istotne różnice, co w przypadku zwykłej ANOVY.
+
+<br>
+
+<br><br>
+
+## **4.6. Kontrasty**
+
+<br><br>
+Ostatnim punktem analizy wariancji będzie sprawdzenie kontrastu, badającego czy wyniki dla umiarkowanego poziomu ćwiczeń są istotnie mniejsze od średniej wyników dla grupy o niskiej i wysokiej częstotliwości ćwiczeń. Odpowiedź na ten problem wydaje się oczywista patrząc po prostu na wykresy pudełkowe, ale zostanie to zbadane formalnie, nadal kontrolując zmienną towarzyszącą wiek.
+
+```{r}
+kontrast3 <- glht(aov(score ~ exercise + age , data = stress),
+                  linfct = mcp(exercise = rbind(c(-0.5, 1, -0.5))),
+                  alternative = "less")
+summary(kontrast3)
+```
+Nie ma podstaw do odrzucenia tej hipotezy (p-value jest bardzo wysokie, wynosi prawie 1). Czyli grupa ćwiczące umiarkowanie posiada istotnie mniejsze wyniki niż średnia dla grup ćwiczących mało i często.
+
+<br><br>
+
+## **4.7. Podsumowanie**
+
+<br><br>
+Analiza wariancji pozwoliła sprawdzić jak na wyniki cholesterolu we krwi działa częstotliwość uprawiania sportu, kontrolując przy tym wiek, który jest skorelowany z poziomem cholesterolu.  Istotnie różniącą się grupą od innych jest grupa osób o wysokiej częstotliwości uprawiania sportu. Natomiast wyniki między osobami uprawiającymi małą i umiarkowaną ilość sportu nie różniły się istotnie. Pomimo tego, że wiek jest skorelowany z poziomem cholesterolu we krwi(czym starsza osoba, tym większa tendencja do wyższego poziomu cholesterolu) wyniki klasycznej jednoczynnikowej ANOVY i ANCOVY był do siebie zbliżone i pozwoliły wysnuć te same wnioski.
+<br>
+
+
+
+
+
+
+
+
